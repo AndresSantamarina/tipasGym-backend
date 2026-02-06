@@ -20,13 +20,12 @@ const clientSchema = new mongoose.Schema({
     activo: { type: Boolean, default: true }
 }, { timestamps: true });
 
-clientSchema.pre('save', function (next) {
+clientSchema.pre('save', function () {
     if (!this.fechaVencimiento) {
-        const fecha = new Date(this.fechaRegistro || Date.now());
+        const fecha = new Date();
         fecha.setDate(fecha.getDate() + 30);
         this.fechaVencimiento = fecha;
     }
-    next();
 });
 
 module.exports = mongoose.model('Client', clientSchema);

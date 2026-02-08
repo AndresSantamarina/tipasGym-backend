@@ -25,18 +25,37 @@ exports.updateClient = async (req, res) => {
     try {
         const clientOriginal = await Client.findById(req.params.id);
         if (!clientOriginal) return res.status(404).json({ msg: 'Cliente no encontrado' });
+
         if (req.body.servicios) {
-            if (req.body.servicios.gym && !req.body.servicios.gym.vencimiento) {
-                req.body.servicios.gym.vencimiento = clientOriginal.servicios.gym.vencimiento;
+            const serviciosNuevos = req.body.servicios;
+            const serviciosViejos = clientOriginal.servicios;
+            const calcularVencimiento = () => {
+                const fecha = new Date();
+                fecha.setDate(fecha.getDate() + 30);
+                return fecha;
+            };
+
+            if (serviciosNuevos.gym) {
+                if (serviciosViejos.gym.modalidad === "No" && serviciosNuevos.gym.modalidad !== "No") {
+                    serviciosNuevos.gym.vencimiento = calcularVencimiento();
+                } else {
+                    serviciosNuevos.gym.vencimiento = serviciosViejos.gym.vencimiento;
+                }
             }
-            if (req.body.servicios.natacion && !req.body.servicios.natacion.vencimiento) {
-                req.body.servicios.natacion.vencimiento = clientOriginal.servicios.natacion.vencimiento;
+
+            if (serviciosNuevos.natacion) {
+                if (serviciosViejos.natacion.modalidad === "No" && serviciosNuevos.natacion.modalidad !== "No") {
+                    serviciosNuevos.natacion.vencimiento = calcularVencimiento();
+                } else {
+                    serviciosNuevos.natacion.vencimiento = serviciosViejos.natacion.vencimiento;
+                }
             }
         }
 
         const client = await Client.findByIdAndUpdate(req.params.id, req.body, { new: true });
         res.json(client);
     } catch (error) {
+        console.log(error);
         res.status(500).json({ msg: 'Error al actualizar cliente' });
     }
 };

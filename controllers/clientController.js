@@ -16,20 +16,25 @@ exports.createClient = async (req, res) => {
         await newClient.save();
         res.status(201).json(newClient);
     } catch (error) {
-        console.error("DETALLE DEL ERROR:", error);
-        res.status(500).json({ msg: 'Error interno en el servidor' });
+        console.error("ERROR AL CREAR CLIENTE:", error);
+        res.status(500).json({ msg: error.message || 'Error interno en el servidor' });
     }
 };
 
 exports.updateClient = async (req, res) => {
     try {
-        const { nombre, servicios } = req.body;
-        const client = await Client.findByIdAndUpdate(
-            req.params.id,
-            { nombre, servicios },
-            { new: true }
-        );
-        if (!client) return res.status(404).json({ msg: 'Cliente no encontrado' });
+        const clientOriginal = await Client.findById(req.params.id);
+        if (!clientOriginal) return res.status(404).json({ msg: 'Cliente no encontrado' });
+        if (req.body.servicios) {
+            if (req.body.servicios.gym && !req.body.servicios.gym.vencimiento) {
+                req.body.servicios.gym.vencimiento = clientOriginal.servicios.gym.vencimiento;
+            }
+            if (req.body.servicios.natacion && !req.body.servicios.natacion.vencimiento) {
+                req.body.servicios.natacion.vencimiento = clientOriginal.servicios.natacion.vencimiento;
+            }
+        }
+
+        const client = await Client.findByIdAndUpdate(req.params.id, req.body, { new: true });
         res.json(client);
     } catch (error) {
         res.status(500).json({ msg: 'Error al actualizar cliente' });
@@ -49,35 +54,68 @@ exports.checkIn = async (req, res) => {
     try {
         const { dni } = req.params;
         const client = await Client.findOne({ dni });
-
-        if (!client) {
-            return res.status(404).json({ msg: 'Cliente no encontrado' });
-        }
+        if (!client) return res.status(404).json({ msg: 'Socio no encontrado' });
 
         const hoy = new Date();
-        const esValido = client.fechaVencimiento > hoy;
-        const status = esValido ? 'ACTIVO' : 'VENCIDO';
+        const gymActivo = client.servicios.gym.modalidad !== 'No' &&
+            client.servicios.gym.vencimiento &&
+            new Date(client.servicios.gym.vencimiento) > hoy;
+        const nataActiva = client.servicios.natacion.modalidad !== 'No' &&
+            client.servicios.natacion.vencimiento &&
+            new Date(client.servicios.natacion.vencimiento) > hoy;
 
-        await AccessLog.create({
+        let statusGlobal = "VENCIDO";
+        if (gymActivo && nataActiva) statusGlobal = "ACTIVO TOTAL";
+        else if (gymActivo && client.servicios.natacion.modalidad === 'No') statusGlobal = "SOLO GYM";
+        else if (nataActiva && client.servicios.gym.modalidad === 'No') statusGlobal = "SOLO NATACIÓN";
+        else if (gymActivo || nataActiva) statusGlobal = "ACTIVO PARCIAL";
+
+        const statusLog = `${gymActivo ? 'GYM OK' : 'GYM X'} / ${nataActiva ? 'NATA OK' : 'NATA X'}`;
+        const newLog = new AccessLog({
             nombre: client.nombre,
             dni: client.dni,
-            statusAlIngresar: status
+            statusAlIngresar: statusLog,
+            fecha: new Date()
         });
+        await newLog.save();
 
         res.json({
             nombre: client.nombre,
-            vence: client.fechaVencimiento,
-            status: status,
-            servicios: client.servicios
+            statusGlobal: statusGlobal,
+            servicios: {
+                gym: {
+                    modalidad: client.servicios.gym.modalidad,
+                    vencimiento: client.servicios.gym.vencimiento,
+                    activo: gymActivo
+                },
+                natacion: {
+                    modalidad: client.servicios.natacion.modalidad,
+                    vencimiento: client.servicios.natacion.vencimiento,
+                    activo: nataActiva
+                }
+            }
         });
     } catch (error) {
+        console.error(error);
         res.status(500).json({ msg: 'Error en el servidor' });
     }
 };
 
 exports.getHistory = async (req, res) => {
     try {
-        const logs = await AccessLog.find().sort({ fecha: -1 }).limit(100);
+        const logs = await AccessLog.aggregate([
+            { $sort: { fecha: -1 } },
+            { $limit: 100 },
+            {
+                $lookup: {
+                    from: "clients",
+                    localField: "dni",
+                    foreignField: "dni",
+                    as: "clientDetails"
+                }
+            },
+            { $unwind: "$clientDetails" }
+        ]);
         res.json(logs);
     } catch (error) {
         res.status(500).json({ msg: 'Error al obtener el historial' });
@@ -87,23 +125,65 @@ exports.getHistory = async (req, res) => {
 exports.getStats = async (req, res) => {
     try {
         const hoy = new Date();
-        hoy.setHours(0, 0, 0, 0);
+        const inicioDia = new Date();
+        inicioDia.setHours(0, 0, 0, 0);
 
-        const total = await Client.countDocuments();
-        const vencidos = await Client.countDocuments({ fechaVencimiento: { $lt: new Date() } });
-        const activos = total - vencidos;
-        const ingresosHoy = await AccessLog.countDocuments({
-            fecha: { $gte: hoy }
+        const totalClients = await Client.find();
+
+        let activosGym = 0;
+        let activosNatacion = 0;
+        let totalActivos = 0;
+        let totalVencidos = 0;
+        let todosPagos = 0;
+        let deudaParcial = 0;
+        let deudaTotal = 0;
+
+        totalClients.forEach(c => {
+            const tieneGym = c.servicios.gym.modalidad !== 'No';
+            const tieneNata = c.servicios.natacion.modalidad !== 'No';
+            const gymActivo = tieneGym && c.servicios.gym.vencimiento && new Date(c.servicios.gym.vencimiento) > hoy;
+            const nataActiva = tieneNata && c.servicios.natacion.vencimiento && new Date(c.servicios.natacion.vencimiento) > hoy;
+
+            if (gymActivo) activosGym++;
+            if (nataActiva) activosNatacion++;
+
+            const numContratados = (tieneGym ? 1 : 0) + (tieneNata ? 1 : 0);
+            const numActivos = (gymActivo ? 1 : 0) + (nataActiva ? 1 : 0);
+
+            if (numContratados > 0) {
+                if (numActivos === numContratados) {
+                    totalActivos++;
+                }
+                if (numActivos < numContratados) {
+                    totalVencidos++;
+                }
+                if (numActivos === numContratados) {
+                    todosPagos++;
+                } else if (numActivos > 0) {
+                    deudaParcial++;
+                } else {
+                    deudaTotal++;
+                }
+            }
         });
 
-        const porcentajeVencidos = total > 0 ? ((vencidos / total) * 100).toFixed(1) : 0;
+        const ingresosHoy = await AccessLog.countDocuments({ fecha: { $gte: inicioDia } });
 
         res.json({
-            total,
-            activos,
-            vencidos,
+            total: totalClients.length,
+            activos: totalActivos,
+            vencidos: totalVencidos,
+            activosGym,
+            activosNatacion,
             ingresosHoy,
-            porcentajeVencidos
+            semaforo: {
+                verde: todosPagos,
+                amarillo: deudaParcial,
+                rojo: deudaTotal,
+                pVerde: totalClients.length > 0 ? Math.round((todosPagos / totalClients.length) * 100) : 0,
+                pAmarillo: totalClients.length > 0 ? Math.round((deudaParcial / totalClients.length) * 100) : 0,
+                pRojo: totalClients.length > 0 ? Math.round((deudaTotal / totalClients.length) * 100) : 0,
+            }
         });
     } catch (error) {
         res.status(500).json({ msg: 'Error al obtener estadísticas' });
@@ -113,27 +193,40 @@ exports.getStats = async (req, res) => {
 exports.renewSubscription = async (req, res) => {
     try {
         const { id } = req.params;
+        const { servicio } = req.body;
         const client = await Client.findById(id);
         if (!client) return res.status(404).json({ msg: 'Cliente no encontrado' });
+        if (!servicio || (servicio !== 'gym' && servicio !== 'natacion')) {
+            return res.status(400).json({ msg: 'Servicio inválido' });
+        }
 
         const hoy = new Date();
-        let nuevaFecha;
+        const currentVencimiento = client.servicios[servicio].vencimiento;
 
-        if (client.fechaVencimiento > hoy) {
-            nuevaFecha = new Date(client.fechaVencimiento);
+        let nuevaFecha;
+        if (currentVencimiento && new Date(currentVencimiento) > hoy) {
+            nuevaFecha = new Date(currentVencimiento);
             nuevaFecha.setDate(nuevaFecha.getDate() + 30);
         } else {
             nuevaFecha = new Date();
             nuevaFecha.setDate(nuevaFecha.getDate() + 30);
         }
 
-        client.fechaVencimiento = nuevaFecha;
-        client.activo = true;
+        client.servicios[servicio].vencimiento = nuevaFecha;
+        if (client.servicios[servicio].modalidad === 'No') {
+            client.servicios[servicio].modalidad = (servicio === 'gym') ? '3 Días' : '2 Días';
+        }
+        client.markModified('servicios');
+
         await client.save();
 
-        res.json({ msg: 'Suscripción renovada con éxito', client });
+        res.json({
+            msg: `Servicio ${servicio.toUpperCase()} renovado con éxito hasta el ${nuevaFecha.toLocaleDateString()}`,
+            client
+        });
     } catch (error) {
-        res.status(500).json({ msg: 'Error al renovar' });
+        console.error("Error al renovar:", error);
+        res.status(500).json({ msg: 'Error al procesar la renovación' });
     }
 };
 

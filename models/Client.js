@@ -5,26 +5,43 @@ const clientSchema = new mongoose.Schema({
     dni: { type: String, required: true, unique: true },
     servicios: {
         gym: {
-            type: String,
-            enum: ['No', '3 Días', '5 Días'],
-            default: 'No'
+            modalidad: {
+                type: String,
+                enum: ['No', '3 Días', '5 Días'],
+                default: 'No'
+            },
+            vencimiento: { type: Date, default: null }
         },
         natacion: {
-            type: String,
-            enum: ['No', '2 Días', '3 Días'],
-            default: 'No'
+            modalidad: {
+                type: String,
+                enum: ['No', '2 Días', '3 Días'],
+                default: 'No'
+            },
+            vencimiento: { type: Date, default: null }
         }
     },
     fechaRegistro: { type: Date, default: Date.now },
-    fechaVencimiento: { type: Date },
-    activo: { type: Boolean, default: true }
 }, { timestamps: true });
 
-clientSchema.pre('save', function () {
-    if (!this.fechaVencimiento) {
-        const fecha = new Date();
-        fecha.setDate(fecha.getDate() + 30);
-        this.fechaVencimiento = fecha;
+clientSchema.pre('save', async function () {
+    const doc = this;
+
+    if (!doc.servicios) doc.servicios = {};
+    if (!doc.servicios.gym) doc.servicios.gym = { modalidad: 'No' };
+    if (!doc.servicios.natacion) doc.servicios.natacion = { modalidad: 'No' };
+
+    const hoy = new Date();
+    const enUnMes = new Date();
+    enUnMes.setDate(hoy.getDate() + 30);
+
+    if (doc.isNew) {
+        if (doc.servicios.gym.modalidad !== 'No' && !doc.servicios.gym.vencimiento) {
+            doc.servicios.gym.vencimiento = enUnMes;
+        }
+        if (doc.servicios.natacion.modalidad !== 'No' && !doc.servicios.natacion.vencimiento) {
+            doc.servicios.natacion.vencimiento = enUnMes;
+        }
     }
 });
 

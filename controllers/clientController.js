@@ -29,6 +29,8 @@ exports.updateClient = async (req, res) => {
         if (req.body.servicios) {
             const serviciosNuevos = req.body.servicios;
             const serviciosViejos = clientOriginal.servicios;
+            const hoy = new Date();
+
             const calcularVencimiento = () => {
                 const fecha = new Date();
                 fecha.setDate(fecha.getDate() + 30);
@@ -36,18 +38,47 @@ exports.updateClient = async (req, res) => {
             };
 
             if (serviciosNuevos.gym) {
-                if (serviciosViejos.gym.modalidad === "No" && serviciosNuevos.gym.modalidad !== "No") {
-                    serviciosNuevos.gym.vencimiento = calcularVencimiento();
+                const modNueva = serviciosNuevos.gym.modalidad;
+                const modVieja = serviciosViejos.gym.modalidad;
+
+                if (modNueva !== "No") {
+                    if (modNueva !== modVieja) {
+                        serviciosNuevos.gym.inicio = hoy;
+                        if (modVieja === "No") {
+                            serviciosNuevos.gym.vencimiento = calcularVencimiento();
+                        } else {
+                            serviciosNuevos.gym.vencimiento = serviciosViejos.gym.vencimiento;
+                        }
+                    } else {
+                        serviciosNuevos.gym.inicio = serviciosViejos.gym.inicio;
+                        serviciosNuevos.gym.vencimiento = serviciosViejos.gym.vencimiento;
+                    }
                 } else {
-                    serviciosNuevos.gym.vencimiento = serviciosViejos.gym.vencimiento;
+                    serviciosNuevos.gym.inicio = null;
+                    serviciosNuevos.gym.vencimiento = null;
                 }
             }
 
             if (serviciosNuevos.natacion) {
-                if (serviciosViejos.natacion.modalidad === "No" && serviciosNuevos.natacion.modalidad !== "No") {
-                    serviciosNuevos.natacion.vencimiento = calcularVencimiento();
+                const modNueva = serviciosNuevos.natacion.modalidad;
+                const modVieja = serviciosViejos.natacion.modalidad;
+
+                if (modNueva !== "No") {
+                    if (modNueva !== modVieja) {
+                        serviciosNuevos.natacion.inicio = hoy;
+
+                        if (modVieja === "No") {
+                            serviciosNuevos.natacion.vencimiento = calcularVencimiento();
+                        } else {
+                            serviciosNuevos.natacion.vencimiento = serviciosViejos.natacion.vencimiento;
+                        }
+                    } else {
+                        serviciosNuevos.natacion.inicio = serviciosViejos.natacion.inicio;
+                        serviciosNuevos.natacion.vencimiento = serviciosViejos.natacion.vencimiento;
+                    }
                 } else {
-                    serviciosNuevos.natacion.vencimiento = serviciosViejos.natacion.vencimiento;
+                    serviciosNuevos.natacion.inicio = null;
+                    serviciosNuevos.natacion.vencimiento = null;
                 }
             }
         }
@@ -55,7 +86,7 @@ exports.updateClient = async (req, res) => {
         const client = await Client.findByIdAndUpdate(req.params.id, req.body, { new: true });
         res.json(client);
     } catch (error) {
-        console.log(error);
+        console.error(error);
         res.status(500).json({ msg: 'Error al actualizar cliente' });
     }
 };
@@ -104,11 +135,13 @@ exports.checkIn = async (req, res) => {
             servicios: {
                 gym: {
                     modalidad: client.servicios.gym.modalidad,
+                    inicio: client.servicios.gym.inicio,
                     vencimiento: client.servicios.gym.vencimiento,
                     activo: gymActivo
                 },
                 natacion: {
                     modalidad: client.servicios.natacion.modalidad,
+                    inicio: client.servicios.gym.inicio,
                     vencimiento: client.servicios.natacion.vencimiento,
                     activo: nataActiva
                 }
@@ -214,38 +247,40 @@ exports.renewSubscription = async (req, res) => {
         const { id } = req.params;
         const { servicio } = req.body;
         const client = await Client.findById(id);
+
         if (!client) return res.status(404).json({ msg: 'Cliente no encontrado' });
-        if (!servicio || (servicio !== 'gym' && servicio !== 'natacion')) {
-            return res.status(400).json({ msg: 'Servicio inválido' });
-        }
 
         const hoy = new Date();
-        const currentVencimiento = client.servicios[servicio].vencimiento;
+        const vencimientoActual = client.servicios[servicio].vencimiento;
 
-        let nuevaFecha;
-        if (currentVencimiento && new Date(currentVencimiento) > hoy) {
-            nuevaFecha = new Date(currentVencimiento);
-            nuevaFecha.setDate(nuevaFecha.getDate() + 30);
+        let nuevaFechaInicio;
+        let nuevaFechaVencimiento;
+
+        if (vencimientoActual && new Date(vencimientoActual) > hoy) {
+            nuevaFechaInicio = new Date(vencimientoActual);
         } else {
-            nuevaFecha = new Date();
-            nuevaFecha.setDate(nuevaFecha.getDate() + 30);
+            nuevaFechaInicio = new Date();
         }
 
-        client.servicios[servicio].vencimiento = nuevaFecha;
+        nuevaFechaVencimiento = new Date(nuevaFechaInicio);
+        nuevaFechaVencimiento.setDate(nuevaFechaVencimiento.getDate() + 30);
+
+        client.servicios[servicio].inicio = nuevaFechaInicio;
+        client.servicios[servicio].vencimiento = nuevaFechaVencimiento;
+
         if (client.servicios[servicio].modalidad === 'No') {
             client.servicios[servicio].modalidad = (servicio === 'gym') ? '3 Días' : '2 Días';
         }
-        client.markModified('servicios');
 
+        client.markModified('servicios');
         await client.save();
 
         res.json({
-            msg: `Servicio ${servicio.toUpperCase()} renovado con éxito hasta el ${nuevaFecha.toLocaleDateString()}`,
+            msg: `Servicio ${servicio.toUpperCase()} renovado hasta el ${nuevaFechaVencimiento.toLocaleDateString()}`,
             client
         });
     } catch (error) {
-        console.error("Error al renovar:", error);
-        res.status(500).json({ msg: 'Error al procesar la renovación' });
+        res.status(500).json({ msg: 'Error al renovar' });
     }
 };
 

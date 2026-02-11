@@ -10,6 +10,7 @@ const clientSchema = new mongoose.Schema({
                 enum: ['No', '3 Días', '5 Días'],
                 default: 'No'
             },
+            inicio: { type: Date, default: null },
             vencimiento: { type: Date, default: null }
         },
         natacion: {
@@ -18,6 +19,7 @@ const clientSchema = new mongoose.Schema({
                 enum: ['No', '2 Días', '3 Días'],
                 default: 'No'
             },
+            inicio: { type: Date, default: null },
             vencimiento: { type: Date, default: null }
         }
     },
@@ -36,10 +38,12 @@ clientSchema.pre('save', async function () {
     enUnMes.setDate(hoy.getDate() + 30);
 
     if (doc.isNew) {
-        if (doc.servicios.gym.modalidad !== 'No' && !doc.servicios.gym.vencimiento) {
+        if (doc.servicios.gym.modalidad !== 'No' && !doc.servicios.gym.inicio) {
+            doc.servicios.gym.inicio = hoy;
             doc.servicios.gym.vencimiento = enUnMes;
         }
-        if (doc.servicios.natacion.modalidad !== 'No' && !doc.servicios.natacion.vencimiento) {
+        if (doc.servicios.natacion.modalidad !== 'No' && !doc.servicios.natacion.inicio) {
+            doc.servicios.natacion.inicio = hoy;
             doc.servicios.natacion.vencimiento = enUnMes;
         }
     }

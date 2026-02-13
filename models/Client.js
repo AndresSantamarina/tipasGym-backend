@@ -1,52 +1,40 @@
 const mongoose = require('mongoose');
 
+const serviceSchema = new mongoose.Schema({
+    modalidad: { type: String, default: 'No' },
+    inicio: { type: Date, default: null },
+    vencimiento: { type: Date, default: null },
+    precioTotal: { type: Number, default: 0 },
+    montoPagado: { type: Number, default: 0 },
+    fechaPago: { type: Date, default: null }
+}, { _id: false });
+
 const clientSchema = new mongoose.Schema({
     nombre: { type: String, required: true },
     dni: { type: String, required: true, unique: true },
     servicios: {
-        gym: {
-            modalidad: {
-                type: String,
-                enum: ['No', '3 Días', '5 Días'],
-                default: 'No'
-            },
-            inicio: { type: Date, default: null },
-            vencimiento: { type: Date, default: null }
-        },
-        natacion: {
-            modalidad: {
-                type: String,
-                enum: ['No', '2 Días', '3 Días'],
-                default: 'No'
-            },
-            inicio: { type: Date, default: null },
-            vencimiento: { type: Date, default: null }
-        }
+        gym: serviceSchema,
+        natacion: serviceSchema,
+        kids: serviceSchema,
+        profe: serviceSchema
     },
     fechaRegistro: { type: Date, default: Date.now },
 }, { timestamps: true });
 
-clientSchema.pre('save', async function () {
-    const doc = this;
-
-    if (!doc.servicios) doc.servicios = {};
-    if (!doc.servicios.gym) doc.servicios.gym = { modalidad: 'No' };
-    if (!doc.servicios.natacion) doc.servicios.natacion = { modalidad: 'No' };
-
+clientSchema.pre('save', function () {
     const hoy = new Date();
-    const enUnMes = new Date();
-    enUnMes.setDate(hoy.getDate() + 30);
+    const serviciosKeys = ['gym', 'natacion', 'kids', 'profe'];
 
-    if (doc.isNew) {
-        if (doc.servicios.gym.modalidad !== 'No' && !doc.servicios.gym.inicio) {
-            doc.servicios.gym.inicio = hoy;
-            doc.servicios.gym.vencimiento = enUnMes;
+    serviciosKeys.forEach(key => {
+        const s = this.servicios[key];
+        if (s && s.modalidad !== 'No' && !s.inicio) {
+            s.inicio = hoy;
+            s.fechaPago = hoy;
+            const v = new Date();
+            v.setDate(hoy.getDate() + 30);
+            s.vencimiento = v;
         }
-        if (doc.servicios.natacion.modalidad !== 'No' && !doc.servicios.natacion.inicio) {
-            doc.servicios.natacion.inicio = hoy;
-            doc.servicios.natacion.vencimiento = enUnMes;
-        }
-    }
+    });
 });
 
 module.exports = mongoose.model('Client', clientSchema);

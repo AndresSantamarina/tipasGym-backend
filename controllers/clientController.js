@@ -1,9 +1,10 @@
 const Client = require('../models/Client');
 const AccessLog = require('../models/AccessLog');
 
-const calcularVencimiento = (desde = new Date()) => {
-    const fecha = new Date(desde);
-    fecha.setDate(fecha.getDate() + 30);
+const normalizarFecha = (fechaStr) => {
+    if (!fechaStr) return new Date();
+    const fecha = new Date(fechaStr);
+    fecha.setHours(fecha.getHours() + 12);
     return fecha;
 };
 
@@ -18,9 +19,17 @@ exports.createClient = async (req, res) => {
         const hoy = new Date();
         Object.keys(servicios).forEach(key => {
             if (servicios[key].modalidad !== "No") {
-                servicios[key].inicio = hoy;
-                servicios[key].vencimiento = calcularVencimiento(hoy);
-                servicios[key].fechaPago = hoy;
+                const s = servicios[key];
+                const fechaInicio = s.inicio ? new Date(s.inicio) : new Date();
+                const diasDuracion = Number(s.duracion) || 30;
+
+                s.inicio = normalizarFecha(fechaInicio);
+                s.duracion = diasDuracion;
+                s.fechaPago = new Date();
+
+                const venc = new Date(fechaInicio);
+                venc.setDate(venc.getDate() + diasDuracion);
+                s.vencimiento = normalizarFecha(venc);
             }
         });
 
@@ -49,35 +58,31 @@ exports.updateClient = async (req, res) => {
                 const sV = client.servicios[key];
 
                 if (sN) {
-                    if (sN.modalidad !== "No" && sV.modalidad === "No") {
-                        sV.modalidad = sN.modalidad;
-                        sV.precioTotal = sN.precioTotal;
-                        sV.montoPagado = sN.montoPagado;
-                        sV.inicio = hoy;
-                        sV.fechaPago = hoy;
-                        const v = new Date();
-                        v.setDate(hoy.getDate() + 30);
-                        sV.vencimiento = v;
-                    }
-                    else if (sN.modalidad !== "No") {
-                        const pagoNuevo = Number(sN.montoPagado);
-                        const pagoViejo = Number(sV.montoPagado || 0);
-
-                        if (pagoNuevo > pagoViejo) {
-                            sV.fechaPago = hoy;
+                    if (sN.modalidad !== "No") {
+                        if (Number(sN.montoPagado) > Number(sV.montoPagado || 0)) {
+                            sV.fechaPago = new Date();
                         }
 
+                        const fechaInicio = normalizarFecha(sN.inicio || sV.inicio);
+                        const diasDuracion = Number(sN.duracion) || Number(sV.duracion) || 30;
+
                         sV.modalidad = sN.modalidad;
-                        sV.precioTotal = sN.precioTotal;
-                        sV.montoPagado = sN.montoPagado;
-                    }
-                    else {
+                        sV.precioTotal = Number(sN.precioTotal);
+                        sV.montoPagado = Number(sN.montoPagado);
+                        sV.inicio = fechaInicio;
+                        sV.duracion = diasDuracion;
+
+                        const v = new Date(fechaInicio);
+                        v.setDate(v.getDate() + diasDuracion);
+                        sV.vencimiento = v;
+                    } else {
                         sV.modalidad = "No";
                         sV.inicio = null;
                         sV.vencimiento = null;
                         sV.fechaPago = null;
                         sV.precioTotal = 0;
                         sV.montoPagado = 0;
+                        sV.duracion = 30;
                     }
                 }
             });
@@ -101,25 +106,6 @@ exports.getClients = async (req, res) => {
         res.status(500).json({ msg: 'Error al obtener clientes' });
     }
 };
-
-// const calcularEstadoServicio = (servicio) => {
-//     if (servicio.modalidad === 'No') return 'OFF';
-
-//     const hoy = new Date();
-//     const vencimiento = new Date(servicio.vencimiento);
-//     const inicio = new Date(servicio.inicio);
-//     const fechaLimiteGracia = new Date(inicio);
-//     fechaLimiteGracia.setDate(fechaLimiteGracia.getDate() + 12);
-
-//     const pagoCompleto = servicio.montoPagado >= servicio.precioTotal;
-//     if (hoy > vencimiento) return 'DEUDA TOTAL';
-
-//     if (pagoCompleto) return 'ACTIVO';
-
-//     if (hoy <= fechaLimiteGracia) return 'DEUDA PARCIAL';
-
-//     return 'DEUDA TOTAL';
-// };
 
 exports.checkIn = async (req, res) => {
     try {
@@ -296,25 +282,24 @@ exports.getStats = async (req, res) => {
 exports.renewSubscription = async (req, res) => {
     try {
         const { id } = req.params;
-        const { servicio, montoPagado, precioTotal } = req.body;
+        const { servicio, montoPagado, precioTotal, inicio, duracion } = req.body;
         const client = await Client.findById(id);
-
-        const hoy = new Date();
         const s = client.servicios[servicio];
 
-        let nuevaFechaInicio = (s.vencimiento && s.vencimiento > hoy) ? new Date(s.vencimiento) : hoy;
-        let nuevaFechaVencimiento = new Date(nuevaFechaInicio);
-        nuevaFechaVencimiento.setDate(nuevaFechaVencimiento.getDate() + 30);
+        const nuevaFechaInicio = inicio ? new Date(inicio) : new Date();
+        const dias = Number(duracion) || 30;
 
-        s.inicio = nuevaFechaInicio;
-        s.vencimiento = nuevaFechaVencimiento;
+        s.inicio = normalizarFecha(nuevaFechaInicio);
         s.montoPagado = montoPagado;
         s.precioTotal = precioTotal;
-        s.fechaPago = hoy;
+        s.fechaPago = new Date();
+
+        const venc = new Date(nuevaFechaInicio);
+        venc.setDate(venc.getDate() + dias);
+        s.vencimiento = normalizarFecha(venc);
 
         client.markModified('servicios');
         await client.save();
-
         res.json({ msg: 'Suscripción renovada', client });
     } catch (error) {
         res.status(500).json({ msg: 'Error al renovar' });
